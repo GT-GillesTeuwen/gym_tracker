@@ -23,5 +23,5 @@ pub async fn login(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
-    Redirect::to("/protected").into_response()
+    Redirect::to("/users").into_response()
 }

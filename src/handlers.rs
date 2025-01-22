@@ -45,7 +45,10 @@ pub async fn list_users(
      // Iterate over the cursor to access each user document
      let mut users=Vec::new();
      while let Ok(user) = cursor.as_mut().unwrap().try_next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR) {
-         users.push(user.unwrap());
+        match user {
+            None => break,
+            Some(user) =>users.push(user)
+        }
      }
  
     Ok(Json(users))
@@ -92,3 +95,4 @@ pub async fn add_user_log(
         Err(StatusCode::NOT_FOUND)
     }
 }
+
