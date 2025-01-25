@@ -22,6 +22,6 @@ pub async fn login(
     if auth_session.login(&user).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-
-    Redirect::to("/users").into_response()
+    return StatusCode::OK.into_response();
+    //Redirect::to("/users").into_response()
 }

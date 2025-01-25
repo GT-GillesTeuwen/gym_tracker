@@ -11,15 +11,26 @@ use axum_login::{
     AuthManagerLayerBuilder,
 };
 use bcrypt::bcrypt;
+use chrono::NaiveDate;
+use clap::{Arg, Command};
 use gym_tracker::{
-    auth::login, handlers::{add_user_log, create_user, get_user_logs, list_users}, models::{AppState, Backend, User}
+    auth::login,
+    handlers::{add_user_session, create_user, get_user_sessions, list_users},
+    models::{
+        AppState, Backend, Exercise, ExerciseCategory, ExerciseLog, GymSession, MuscleGroup, Set,
+        User,
+    },
 };
-use mongodb::{bson::{bson, doc, oid::ObjectId}, options::ClientOptions, Client, Database};
+use mongodb::{
+    bson::{bson, doc, oid::ObjectId},
+    options::ClientOptions,
+    Client, Database,
+};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio;
-use clap::{Arg, Command};
-use rand::Rng;
+use tower_http::cors::CorsLayer;
 
 // Define User, ExerciseLog, Exercise, etc. (Use the nested structs from earlier)
 
@@ -37,15 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .author("Your Name <your.email@example.com>")
         .about("Tracks gym activities")
         .subcommand(
-            Command::new("run")
-                .about("Runs the server")
-                .arg(
-                    Arg::new("listener")
-                        .short('l')
-                        .long("listener")
-                        .value_name("LISTENER")
-                        .default_value("0.0.0.0:3000"),
-                ),
+            Command::new("run").about("Runs the server").arg(
+                Arg::new("listener")
+                    .short('l')
+                    .long("listener")
+                    .value_name("LISTENER")
+                    .default_value("0.0.0.0:3000"),
+            ),
         )
         .subcommand(
             Command::new("make_user")
@@ -65,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .required(true),
                 ),
         )
+        .subcommand(Command::new("show_session").about("Prints a gym session"))
         .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("run") {
@@ -76,29 +86,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Creating user: {}", username);
         println!("Password: {}", password);
         create_user_console(db, username, password).await?;
+    } else if matches.subcommand_matches("show_session").is_some() {
+        show_a_gym_session();
     }
 
     Ok(())
 }
 
-pub async fn create_user_console(db: Database,user_name:&String,password:&String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn create_user_console(
+    db: Database,
+    user_name: &String,
+    password: &String,
+) -> Result<(), Box<dyn std::error::Error>> {
     let users_collection = db.collection::<User>("users");
     let mut rng = rand::thread_rng();
     let salt: [u8; 16] = rng.gen();
-    let user = User{
-        id:Some(ObjectId::new()),
-        name:user_name.clone(),
-        pw_hash:bcrypt(16, salt, password.as_bytes()).to_vec(),
-        salt:salt.to_vec(),
-        exercise_logs:Vec::new(),
+    let user = User {
+        id: Some(ObjectId::new()),
+        name: user_name.clone(),
+        pw_hash: bcrypt(16, salt, password.as_bytes()).to_vec(),
+        salt: salt.to_vec(),
+        gym_sessions: Vec::new(),
     };
     let result = users_collection.insert_one(user.clone()).await?;
     println!("{:?}", result);
     Ok(())
 }
 
-
-pub async fn run(db: Database, listener:String)->Result<(), Box<dyn std::error::Error>>{
+pub async fn run(db: Database, listener: String) -> Result<(), Box<dyn std::error::Error>> {
     // Session layer.
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store);
@@ -113,15 +128,48 @@ pub async fn run(db: Database, listener:String)->Result<(), Box<dyn std::error::
     // Define routes
     let app = Router::new()
         .route("/users", get(list_users))
+        .route(
+            "/users/{name}/sessions",
+            get(get_user_sessions).post(add_user_session),
+        )
         .route_layer(login_required!(Backend, login_url = "/login"))
-        .route("/users/{name}/logs", get(get_user_logs).post(add_user_log))
         .route("/login", post(login))
         .with_state(state)
-        .layer(auth_layer);
+        .layer(auth_layer)
+        .layer(CorsLayer::very_permissive());
 
     // Run server
     println!("Listening on {}", listener);
     let listener = tokio::net::TcpListener::bind(listener).await.unwrap();
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+pub fn show_a_gym_session() {
+    let session = GymSession {
+        date: NaiveDate::from_ymd(2021, 10, 1),
+        exercises: vec![ExerciseLog {
+            exercise: Exercise {
+                name: "Bench Press".to_string(),
+                muscle_group: MuscleGroup::Chest,
+                category: ExerciseCategory::Upper,
+            },
+            sets: vec![
+                Set {
+                    weight: 50.0,
+                    reps: 10,
+                    struggle_score: gym_tracker::models::StruggleScore::Easy,
+                },
+                Set {
+                    weight: 50.0,
+                    reps: 10,
+                    struggle_score: gym_tracker::models::StruggleScore::Easy,
+                },
+            ],
+        }],
+        notes: "Good session".to_string(),
+    };
+
+    let json_session = serde_json::to_string_pretty(&session).unwrap();
+    println!("{}", json_session);
 }

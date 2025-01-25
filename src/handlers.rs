@@ -12,7 +12,7 @@ use tokio;
 use futures_util::TryStreamExt;
 
 
-use crate::models::{AppState, ExerciseLog, User};
+use crate::models::{AppState, ExerciseLog, GymSession, User};
 
 
 pub async fn create_user(
@@ -54,10 +54,10 @@ pub async fn list_users(
     Ok(Json(users))
 }
 
-pub async fn get_user_logs(
+pub async fn get_user_sessions(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<ExerciseLog>>, StatusCode> {
+) -> Result<Json<Vec<GymSession>>, StatusCode> {
     let users_collection = state.db.collection::<User>("users");
 
     let user = users_collection
@@ -67,23 +67,23 @@ pub async fn get_user_logs(
 
         println!("{:?}", user);
     if let Some(user) = user {
-        Ok(Json(user.exercise_logs))
+        Ok(Json(user.gym_sessions))
     } else {
         Err(StatusCode::NOT_FOUND)
     }
 }
 
-pub async fn add_user_log(
+pub async fn add_user_session(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(new_log): Json<ExerciseLog>,
+    Json(new_session): Json<GymSession>,
 ) -> Result<StatusCode, StatusCode> {
     let users_collection = state.db.collection::<User>("users");
 
     let update_result = users_collection
         .update_one(
             doc! { "name": name },
-            doc! { "$push": { "exercise_logs": bson::to_bson(&new_log).unwrap() } },
+            doc! { "$push": { "gym_sessions": bson::to_bson(&new_session).unwrap() } },
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

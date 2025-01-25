@@ -17,14 +17,20 @@ pub struct User {
     pub name: String,
     pub pw_hash: Vec<u8>,
     pub salt: Vec<u8>,
-    pub exercise_logs: Vec<ExerciseLog>, // Nest exercise logs directly
+    pub gym_sessions: Vec<GymSession>, // Nest exercise logs directly
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct GymSession{
+    pub date: NaiveDate,
+    pub exercises: Vec<ExerciseLog>,
+    pub notes: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ExerciseLog {
     pub exercise: Exercise, // Nest the exercise directly
-    pub sets: Vec<Set>,
-    pub date: NaiveDate,
+    pub sets: Vec<Set>
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -55,8 +61,6 @@ pub enum MuscleGroup {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum ExerciseCategory {
-    Push,
-    Pull,
     Upper,
     Lower,
     Cardio,
