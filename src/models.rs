@@ -5,6 +5,8 @@ use axum_login::{AuthUser, AuthnBackend, UserId};
 use bcrypt::bcrypt;
 use bcrypt::{verify, DEFAULT_COST};
 use chrono::NaiveDate;
+//use json_example_macro::JsonExample;
+use mongodb::bson::de;
 use mongodb::{
     bson::{doc, oid::ObjectId},
     Database,
@@ -24,7 +26,7 @@ pub struct User {
 pub struct GymSession{
     pub date: NaiveDate,
     pub exercises: Vec<ExerciseLog>,
-    pub notes: String,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -37,30 +39,38 @@ pub struct ExerciseLog {
 pub struct Set {
     pub weight: f64,
     pub reps: u32,
-    pub struggle_score: StruggleScore,
+    pub struggle_score: Option<StruggleScore>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone,Default)]
 pub struct Exercise {
     pub name: String,
-    pub muscle_group: MuscleGroup,
+    pub muscle_group: Vec<MuscleGroup>,
     pub category: ExerciseCategory,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone,Default)]
 pub enum MuscleGroup {
-    Chest,
+    #[default]
+    UpperChest,
+    LowerChest,
+    Lats,
     Back,
-    Legs,
+    Quads,
+    Hamstrings,
+    Glutes,
+    Calves,
     Shoulders,
-    Arms,
+    Biceps,
+    Triceps,
     Core,
     FullBody,
     Cardio,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone,Default)]
 pub enum ExerciseCategory {
+    #[default]
     Upper,
     Lower,
     Cardio,

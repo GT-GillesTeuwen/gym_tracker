@@ -1,0 +1,4 @@
+# buildkitd.toml
+[registry."192.168.8.150:5000"]
+  http = true
+  insecure = true

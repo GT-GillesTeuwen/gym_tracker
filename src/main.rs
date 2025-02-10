@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{Method, StatusCode},
     response::Json,
     routing::{get, post},
     Router,
@@ -12,10 +12,13 @@ use axum_login::{
 };
 use bcrypt::bcrypt;
 use chrono::NaiveDate;
-use clap::{Arg, Command};
+use clap::{Arg, Command, Parser, Subcommand};
 use gym_tracker::{
     auth::login,
-    handlers::{add_user_session, create_user, get_user_sessions, list_users},
+    handlers::{
+        add_excercise, add_user_session, create_user, get_exercises, get_last_3_for_user,
+        get_user_sessions, list_users,
+    },
     models::{
         AppState, Backend, Exercise, ExerciseCategory, ExerciseLog, GymSession, MuscleGroup, Set,
         User,
@@ -30,64 +33,84 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowHeaders, AllowOrigin, Any, CorsLayer};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 // Define User, ExerciseLog, Exercise, etc. (Use the nested structs from earlier)
+/// CLI Parser for the Gym Tracker application.
+#[derive(Parser)]
+#[command(
+    name = "Gym Tracker",
+    version = "1.0",
+    author = "Your Name <your.email@example.com>",
+    about = "Tracks gym activities"
+)]
+struct GymTrackerCli {
+    #[command(subcommand)]
+    command: GymCommand,
+}
+
+/// Enum for subcommands
+#[derive(Subcommand)]
+enum GymCommand {
+    /// Runs the server
+    Run {
+        #[arg(short, long, default_value = "0.0.0.0:4000")]
+        listener: String,
+    },
+    /// Creates a new user
+    MakeUser {
+        #[arg(short, long)]
+        username: String,
+        #[arg(short, long)]
+        password: String,
+    },
+    /// Prints a gym session
+    ShowSession,
+    Example {
+        name: String,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO) // Set max log level
+        .with_span_events(FmtSpan::CLOSE) // Show span lifecycle events
+        .with_ansi(true) // Enable color
+        .with_line_number(true)
+        .init();
+
     // MongoDB connection
     let mongo_uri = std::env::var("MONGO_URL").expect("MONGO_URL must be set");
     let options = ClientOptions::parse(mongo_uri).await?;
     let client = Client::with_options(options)?;
     let db = client.database("gym_tracker");
 
-    let matches = Command::new("Gym Tracker")
-        .version("1.0")
-        .author("Your Name <your.email@example.com>")
-        .about("Tracks gym activities")
-        .subcommand(
-            Command::new("run").about("Runs the server").arg(
-                Arg::new("listener")
-                    .short('l')
-                    .long("listener")
-                    .value_name("LISTENER")
-                    .default_value("0.0.0.0:3000"),
-            ),
-        )
-        .subcommand(
-            Command::new("make_user")
-                .about("Creates a new user")
-                .arg(
-                    Arg::new("username")
-                        .short('u')
-                        .long("username")
-                        .value_name("USERNAME")
-                        .required(true),
-                )
-                .arg(
-                    Arg::new("password")
-                        .short('p')
-                        .long("password")
-                        .value_name("PASSWORD")
-                        .required(true),
-                ),
-        )
-        .subcommand(Command::new("show_session").about("Prints a gym session"))
-        .get_matches();
+    let args = GymTrackerCli::parse();
 
-    if let Some(matches) = matches.subcommand_matches("run") {
-        let listener = matches.get_one::<String>("listener").unwrap().to_string();
-        run(db, listener.to_string()).await?;
-    } else if let Some(matches) = matches.subcommand_matches("make_user") {
-        let username = matches.get_one::<String>("username").unwrap();
-        let password = matches.get_one::<String>("password").unwrap();
-        println!("Creating user: {}", username);
-        println!("Password: {}", password);
-        create_user_console(db, username, password).await?;
-    } else if matches.subcommand_matches("show_session").is_some() {
-        show_a_gym_session();
+    match args.command {
+        GymCommand::Run { listener } => {
+            run(db, listener).await?;
+        }
+        GymCommand::MakeUser { username, password } => {
+            println!("Creating user: {}", username);
+            println!("Password: {}", password);
+            create_user_console(db, &username, &password).await?;
+        }
+        GymCommand::ShowSession => {
+            show_a_gym_session();
+        }
+        GymCommand::Example { name } => {
+            if name == "Exercise" {
+                //let example = Exercise::example();
+                //println!("{}", serde_json::to_string_pretty(&example).unwrap());
+            } else {
+                eprintln!("No example found for: {}", name);
+            }
+        }
     }
 
     Ok(())
@@ -116,7 +139,10 @@ pub async fn create_user_console(
 pub async fn run(db: Database, listener: String) -> Result<(), Box<dyn std::error::Error>> {
     // Session layer.
     let session_store = MemoryStore::default();
-    let session_layer = SessionManagerLayer::new(session_store);
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_same_site(axum_login::tower_sessions::cookie::SameSite::Strict)
+        .with_secure(false)
+        .with_http_only(true);
 
     // Auth service.
     let b = Backend { db: db.clone() };
@@ -125,18 +151,27 @@ pub async fn run(db: Database, listener: String) -> Result<(), Box<dyn std::erro
     // Create shared state
     let state = AppState { db: Arc::new(db) };
 
+    // CORS layer
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_origin(AllowOrigin::mirror_request()) // Allow all origins, replace with your frontend's URL for security
+        .allow_headers(AllowHeaders::mirror_request())
+        .allow_credentials(true); // Required for cookies to be sent
+
     // Define routes
     let app = Router::new()
-        .route("/users", get(list_users))
+        .route("/api/users", get(list_users))
         .route(
-            "/users/{name}/sessions",
+            "/api/users/{name}/sessions",
             get(get_user_sessions).post(add_user_session),
         )
-        .route_layer(login_required!(Backend, login_url = "/login"))
-        .route("/login", post(login))
+        .route("/api/last3/{name}/{exercise}", get(get_last_3_for_user))
+        .route("/api/exercise", post(add_excercise).get(get_exercises))
+        .route_layer(login_required!(Backend, login_url = "/api/login"))
+        .route("/api/login", post(login))
         .with_state(state)
         .layer(auth_layer)
-        .layer(CorsLayer::very_permissive());
+        .layer(cors);
 
     // Run server
     println!("Listening on {}", listener);
@@ -151,23 +186,23 @@ pub fn show_a_gym_session() {
         exercises: vec![ExerciseLog {
             exercise: Exercise {
                 name: "Bench Press".to_string(),
-                muscle_group: MuscleGroup::Chest,
+                muscle_group: vec![MuscleGroup::UpperChest],
                 category: ExerciseCategory::Upper,
             },
             sets: vec![
                 Set {
                     weight: 50.0,
                     reps: 10,
-                    struggle_score: gym_tracker::models::StruggleScore::Easy,
+                    struggle_score: Some(gym_tracker::models::StruggleScore::Easy),
                 },
                 Set {
                     weight: 50.0,
                     reps: 10,
-                    struggle_score: gym_tracker::models::StruggleScore::Easy,
+                    struggle_score: Some(gym_tracker::models::StruggleScore::Easy),
                 },
             ],
         }],
-        notes: "Good session".to_string(),
+        notes: Some("Good session".to_string()),
     };
 
     let json_session = serde_json::to_string_pretty(&session).unwrap();
